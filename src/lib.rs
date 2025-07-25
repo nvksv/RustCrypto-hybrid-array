@@ -114,6 +114,9 @@ mod traits;
 #[cfg(feature = "serde")]
 mod serde;
 
+#[cfg(feature = "generic-interop")]
+mod generic;
+
 pub use crate::{iter::TryFromIteratorError, traits::*};
 pub use typenum;
 
@@ -138,6 +141,9 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
+
+#[cfg(feature = "generic-interop")]
+pub use generic::{IntoGenericArrayLength, IntoArraySize};
 
 /// Type alias for [`Array`] which is const generic around a size `N`, ala `[T; N]`.
 pub type ArrayN<T, const N: usize> = Array<T, <[T; N] as AssocArraySize>::Size>;

@@ -24,12 +24,15 @@ bytemuck = { version = "1", optional = true, default-features = false }
 serde = { version = "1", optional = true, default-features = false }
 subtle = { version = "2", optional = true, default-features = false }
 zeroize = { version = "1.8", optional = true, default-features = false }
+generic-array = { version = "0.14.7", optional = true, default-features = false, features = ["more_lengths"]}
 
 [dev-dependencies]
 bincode = { version = "2", features = ["serde"] }
 
 [features]
 extra-sizes = []
+generic-interop = [ "dep:generic-array" ]
+default = ["generic-interop", "extra-sizes"]
 
 [package.metadata.docs.rs]
 all-features = true
