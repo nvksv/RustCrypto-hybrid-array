@@ -72,7 +72,7 @@ macro_rules! impl_consts {
                 type ArrayLength<T> = $ty;
             }
 
-            impl<T> FromGenericArrayLength<T> for $ty {
+            impl<T> IntoArraySize<T> for $ty {
                 type ArraySize = $ty;
             }
         )+
