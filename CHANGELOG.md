@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.5 (2025-09-29)
+### Added
+- Impl `arbitrary::Arbitrary` for `Array` ([#153])
+
+### Changed
+- Switch from `doc_auto_cfg` to `doc_cfg` ([#154])
+
+[#153]: https://github.com/RustCrypto/hybrid-array/pull/153
+[#154]: https://github.com/RustCrypto/hybrid-array/pull/154
+
+## 0.4.4 (2025-09-24)
+### Added
+- Enable the `subtle/const-generics` feature ([#149])
+
+[#149]: https://github.com/RustCrypto/hybrid-array/pull/149
+
+## 0.4.3 (2025-09-23)
+### Added
+- `Array::as_(mut_)ptr` ([#147])
+
+### Changed
+- Remove bounds on `Array::slice_as_flattened(_mut)`; make `const fn` ([#144])
+- Make `Array::as_(mut_)slice` a `const fn` ([#147])
+- Make `Array::<Array<T, U>::as_flattened(_mut)` a `const fn` ([#147])
+
+[#144]: https://github.com/RustCrypto/hybrid-array/pull/144
+[#147]: https://github.com/RustCrypto/hybrid-array/pull/147
+
+## 0.4.2 (2025-09-21) [YANKED]
+### Added
+- `Array::slice_as_flattened(_mut)` ([#142])
+
+[#142]: https://github.com/RustCrypto/hybrid-array/pull/142
+
+## 0.4.1 (2025-09-10)
+### Changed
+- Make slice conversions `const fn` ([#140])
+
+[#140]: https://github.com/RustCrypto/hybrid-array/pull/140
+
+## 0.4.0 (2025-09-01)
+### Added
+- `ArraySize` impls for `U536` and `U568` ([#128])
+- `AsArrayRef`/`AsArrayMut` traits with impls on `[T; N]` and `Array` ([#135])
+- `alloc` feature with `Box`/`Vec` conversions to/from `Array` ([#136], [#138])
+
+### Removed
+- `AsRef`/`AsMut` impls on `[T; N]` ([#133])
+
+[#128]: https://github.com/RustCrypto/hybrid-array/pull/128
+[#133]: https://github.com/RustCrypto/hybrid-array/pull/133
+[#135]: https://github.com/RustCrypto/hybrid-array/pull/135
+[#136]: https://github.com/RustCrypto/hybrid-array/pull/136
+[#138]: https://github.com/RustCrypto/hybrid-array/pull/138
+
 ## 0.3.1 (2025-03-30)
 ### Added
 - `subtle` feature ([#126])

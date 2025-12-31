@@ -1,6 +1,6 @@
 [package]
 name = "hybrid-array"
-version = "0.3.1"
+version = "0.4.5"
 description = """
 Hybrid typenum-based and const generic array types designed to provide the
 flexibility of typenum-based expressions while also allowing interoperability
@@ -20,20 +20,18 @@ rust-version = "1.85"
 typenum = { version = "1.17", features = ["const-generics"] }
 
 # optional dependencies
+arbitrary = { version = "1", optional = true }
 bytemuck = { version = "1", optional = true, default-features = false }
 serde = { version = "1", optional = true, default-features = false }
-subtle = { version = "2", optional = true, default-features = false }
+subtle = { version = "2", optional = true, default-features = false, features = ["const-generics"] }
 zeroize = { version = "1.8", optional = true, default-features = false }
 generic-array = { version = "0.14.7", optional = true, default-features = false, features = ["more_lengths"]}
 
-[dev-dependencies]
-bincode = { version = "2", features = ["serde"] }
-
 [features]
+alloc = []
 extra-sizes = []
 generic-interop = [ "dep:generic-array" ]
 default = ["generic-interop", "extra-sizes"]
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]

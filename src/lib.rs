@@ -1,5 +1,5 @@
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/RustCrypto/meta/master/logo.svg",
@@ -68,6 +68,18 @@
 //! sizes of arrays via associated constants. For example, to obtain the size of an `ArraySize` as
 //! a `usize`, use the associated [`typenum::Unsigned::USIZE`] constant.
 //!
+//! ### [`AsArrayRef`] and [`AsArrayMut`] traits
+//!
+//! These traits simplify obtaining references to [`Array`] and are impl'd for both [`Array`]
+//! and `[T; N]`. They're analogous to traits like [`AsRef`] and [`AsMut`].
+//!
+//! They make it possible to write code which uses `[T; N]` or `&[T; N]` in the external facing
+//! API which can obtain references to `&Array` and call other functions which accept such
+//! references, without the caller having to use `Array` in their code and while still supporting
+//! generic sizes.
+//!
+//! For more information and a code example, see [`AsArrayRef`].
+//!
 //! ## Relationship with `generic-array`
 //!
 //! `hybrid-array` is directly inspired by the [`generic-array`] crate.
@@ -75,8 +87,8 @@
 //! However, where `generic-array` predates const generics and uses a core which is built
 //! on `unsafe` code, `hybrid-array`'s core implementation is built on safe code and const
 //! generic implementations. This allows the inner `[T; N]` field of an `Array` to be `pub` as
-//! noted above, and in general for the implementation to be significantly simpler and
-//! easier-to-audit.
+//! noted above, and in general for the implementation to be significantly simpler, easier-to-audit,
+//! and with significantly less use of `unsafe`.
 //!
 //! The only places `hybrid-array` uses unsafe are where it is absolutely necessary, primarily
 //! for reference conversions between `Array<T, U>` and `[T; N]`, and also to provide features
@@ -105,6 +117,9 @@
 //! If you have any questions, please
 //! [start a discussion](https://github.com/RustCrypto/hybrid-array/discussions).
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod sizes;
 
 mod from_fn;
@@ -132,6 +147,9 @@ use core::{
     slice::{self, Iter, IterMut},
 };
 use typenum::{Diff, Sum};
+
+#[cfg(feature = "arbitrary")]
+use arbitrary::Arbitrary;
 
 #[cfg(feature = "bytemuck")]
 use bytemuck::{Pod, Zeroable};
@@ -162,32 +180,6 @@ pub type ArrayN<T, const N: usize> = Array<T, <[T; N] as AssocArraySize>::Size>;
 ///
 /// let arr: Array<u8, U3> = Array([1, 2, 3]);
 /// ```
-///
-/// ## [`AsRef`] impls
-///
-/// The [`AsRef`] trait can be used to convert from `&Array<T, U>` to `&[T; N]` and vice versa:
-///
-/// ```
-/// use hybrid_array::{Array, ArraySize, AssocArraySize, ArrayN, sizes::U3};
-///
-/// pub fn get_third_item_hybrid_array<T, U: ArraySize>(arr_ref: &Array<T, U>) -> &T {
-///     &arr_ref[2]
-/// }
-///
-/// pub fn get_third_item_const_generic<T, const N: usize>(arr_ref: &[T; N]) -> &T
-/// where
-///     [T; N]: AssocArraySize + AsRef<ArrayN<T, N>>
-/// {
-///     get_third_item_hybrid_array(arr_ref.as_ref())
-/// }
-///
-/// assert_eq!(get_third_item_const_generic(&[1u8, 2, 3, 4]), &3);
-/// ```
-///
-/// Note that the [`AssocArraySize`] trait can be used to determine the appropriate
-/// [`Array`] size for a given `[T; N]`, and the [`ArrayN`] trait (which internally uses
-/// [`AssocArraySize`]) can be used to determine the specific [`Array`] type for a given
-/// const generic size.
 #[repr(transparent)]
 pub struct Array<T, U: ArraySize>(pub U::ArrayType<T>);
 
@@ -201,14 +193,30 @@ where
 {
     /// Returns a slice containing the entire array. Equivalent to `&s[..]`.
     #[inline]
-    pub fn as_slice(&self) -> &[T] {
-        self.0.as_ref()
+    pub const fn as_slice(&self) -> &[T] {
+        // SAFETY: `[T]` is layout-identical to `Array<T, U>`, which is a `repr(transparent)`
+        // newtype for `[T; N]`.
+        unsafe { slice::from_raw_parts(self.as_ptr(), U::USIZE) }
     }
 
     /// Returns a mutable slice containing the entire array. Equivalent to `&mut s[..]`.
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0.as_mut()
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: `[T]` is layout-identical to `Array<T, U>`, which is a `repr(transparent)`
+        // newtype for `[T; N]`.
+        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), U::USIZE) }
+    }
+
+    /// Returns a pointer to the start of the array.
+    #[allow(trivial_casts)]
+    pub const fn as_ptr(&self) -> *const T {
+        self as *const Self as *const T
+    }
+
+    /// Returns a mutable pointer to the start of the array.
+    #[allow(trivial_casts)]
+    pub const fn as_mut_ptr(&mut self) -> *mut T {
+        self as *mut Self as *mut T
     }
 
     /// Returns an iterator over the array.
@@ -309,8 +317,8 @@ where
     /// Panics if `U` is 0.
     #[allow(clippy::arithmetic_side_effects)]
     #[inline]
-    pub fn slice_as_chunks(buf: &[T]) -> (&[Self], &[T]) {
-        assert_ne!(U::USIZE, 0, "chunk size must be non-zero");
+    pub const fn slice_as_chunks(buf: &[T]) -> (&[Self], &[T]) {
+        assert!(U::USIZE != 0, "chunk size must be non-zero");
         // Arithmetic safety: we have checked that `N::USIZE` is not zero, thus
         // division always returns correct result. `tail_pos` can not be bigger than `buf.len()`,
         // thus overflow on multiplication and underflow on substraction are impossible.
@@ -332,8 +340,8 @@ where
     /// Panics if `U` is 0.
     #[allow(clippy::arithmetic_side_effects)]
     #[inline]
-    pub fn slice_as_chunks_mut(buf: &mut [T]) -> (&mut [Self], &mut [T]) {
-        assert_ne!(U::USIZE, 0, "chunk size must be non-zero");
+    pub const fn slice_as_chunks_mut(buf: &mut [T]) -> (&mut [Self], &mut [T]) {
+        assert!(U::USIZE != 0, "chunk size must be non-zero");
         // Arithmetic safety: we have checked that `N::USIZE` is not zero, thus
         // division always returns correct result. `tail_pos` can not be bigger than `buf.len()`,
         // thus overflow on multiplication and underflow on substraction are impossible.
@@ -348,40 +356,99 @@ where
         }
     }
 
-    /// Convert the given slice into a reference to a hybrid array.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the slice's length doesn't match the array type.
-    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
+    /// Obtain a flattened slice from a slice of array chunks.
     #[inline]
-    pub fn from_slice(slice: &[T]) -> &Self {
-        slice.try_into().expect("slice length mismatch")
+    pub const fn slice_as_flattened(slice: &[Self]) -> &[T] {
+        let len = slice
+            .len()
+            .checked_mul(U::USIZE)
+            .expect("slice len overflow");
+
+        // SAFETY: `[T]` is layout-identical to `Array<T, U>`, which is a `repr(transparent)`
+        // newtype for `[T; N]`.
+        unsafe { slice::from_raw_parts(slice.as_ptr().cast(), len) }
     }
 
-    /// Convert the given mutable slice to a mutable reference to a hybrid array.
+    /// Obtain a mutable flattened slice from a mutable slice of array chunks.
+    #[inline]
+    pub const fn slice_as_flattened_mut(slice: &mut [Self]) -> &mut [T] {
+        let len = slice
+            .len()
+            .checked_mul(U::USIZE)
+            .expect("slice len overflow");
+
+        // SAFETY: `[T]` is layout-identical to `Array<T, U>`, which is a `repr(transparent)`
+        // newtype for `[T; N]`.
+        unsafe { slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), len) }
+    }
+}
+
+impl<T, U, V> Array<Array<T, U>, V>
+where
+    U: ArraySize,
+    V: ArraySize,
+{
+    /// Takes a `&Array<Array<T, N>, >>`, and flattens it to a `&[T]`.
     ///
     /// # Panics
     ///
-    /// Panics if the slice's length doesn't match the array type.
-    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
-    #[inline]
-    pub fn from_mut_slice(slice: &mut [T]) -> &mut Self {
-        slice.try_into().expect("slice length mismatch")
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hybrid_array::{Array, typenum::{U0, U2, U3, U5, U10}};
+    ///
+    /// let a: Array<Array<usize, U3>, U2> = Array([Array([1, 2, 3]), Array([4, 5, 6])]);
+    /// assert_eq!(a.as_flattened(), &[1, 2, 3, 4, 5, 6]);
+    ///
+    /// let b: Array<Array<usize, U2>, U3> = Array([Array([1, 2]), Array([3, 4]), Array([5, 6])]);
+    /// assert_eq!(a.as_flattened(), b.as_flattened());
+    ///
+    /// let c: Array<[usize; 2], U3> = Array([[1, 2], [3, 4], [5, 6]]);
+    /// assert_eq!(a.as_flattened(), c.as_flattened());
+    ///
+    /// let slice_of_empty_arrays: &Array<Array<i32, U5>, U0> = &Array::from_fn(|_| Array([1, 2, 3, 4, 5]));
+    /// assert!(slice_of_empty_arrays.as_flattened().is_empty());
+    ///
+    /// let empty_slice_of_arrays: &Array<Array<u32, U10>, U0>  = &Array([]);
+    /// assert!(empty_slice_of_arrays.as_flattened().is_empty());
+    /// ```
+    pub const fn as_flattened(&self) -> &[T] {
+        Array::slice_as_flattened(self.as_slice())
     }
 
-    /// Clone the contents of the slice as a new hybrid array.
+    /// Takes a `&mut Array<Array<T, N>,M>`, and flattens it to a `&mut [T]`.
     ///
     /// # Panics
     ///
-    /// Panics if the slice's length doesn't match the array type.
-    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
-    #[inline]
-    pub fn clone_from_slice(slice: &[T]) -> Self
-    where
-        Self: Clone,
-    {
-        slice.try_into().expect("slice length mismatch")
+    /// This panics if the length of the resulting slice would overflow a `usize`.
+    ///
+    /// This is only possible when flattening a slice of arrays of zero-sized
+    /// types, and thus tends to be irrelevant in practice. If
+    /// `size_of::<T>() > 0`, this will never panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use hybrid_array::{Array, typenum::U3};
+    ///
+    /// fn add_5_to_all(slice: &mut [i32]) {
+    ///     for i in slice {
+    ///         *i += 5;
+    ///     }
+    /// }
+    ///
+    /// let mut array: Array<Array<i32, U3>, U3> = Array([Array([1_i32, 2, 3]), Array([4, 5, 6]), Array([7, 8, 9])]);
+    /// add_5_to_all(array.as_flattened_mut());
+    /// assert_eq!(array, Array([Array([6, 7, 8]), Array([9, 10, 11]), Array([12, 13, 14])]));
+    /// ```
+    pub const fn as_flattened_mut(&mut self) -> &mut [T] {
+        Array::slice_as_flattened_mut(self.as_mut_slice())
     }
 }
 
@@ -392,28 +459,28 @@ where
 {
     /// Transform slice to slice of core array type.
     #[inline]
-    pub fn cast_slice_to_core(slice: &[Self]) -> &[[T; N]] {
+    pub const fn cast_slice_to_core(slice: &[Self]) -> &[[T; N]] {
         // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; N]`
         unsafe { slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
     }
 
     /// Transform mutable slice to mutable slice of core array type.
     #[inline]
-    pub fn cast_slice_to_core_mut(slice: &mut [Self]) -> &mut [[T; N]] {
+    pub const fn cast_slice_to_core_mut(slice: &mut [Self]) -> &mut [[T; N]] {
         // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; N]`
         unsafe { slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), slice.len()) }
     }
 
     /// Transform slice to slice of core array type.
     #[inline]
-    pub fn cast_slice_from_core(slice: &[[T; N]]) -> &[Self] {
+    pub const fn cast_slice_from_core(slice: &[[T; N]]) -> &[Self] {
         // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; N]`
         unsafe { slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
     }
 
     /// Transform mutable slice to mutable slice of core array type.
     #[inline]
-    pub fn cast_slice_from_core_mut(slice: &mut [[T; N]]) -> &mut [Self] {
+    pub const fn cast_slice_from_core_mut(slice: &mut [[T; N]]) -> &mut [Self] {
         // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; N]`
         unsafe { slice::from_raw_parts_mut(slice.as_mut_ptr().cast(), slice.len()) }
     }
@@ -492,17 +559,6 @@ where
     }
 }
 
-impl<T, U, const N: usize> AsRef<Array<T, U>> for [T; N]
-where
-    U: ArraySize<ArrayType<T> = [T; N]>,
-{
-    #[inline]
-    fn as_ref(&self) -> &Array<T, U> {
-        // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; $len]`
-        unsafe { &*self.as_ptr().cast() }
-    }
-}
-
 impl<T, U> AsMut<[T]> for Array<T, U>
 where
     U: ArraySize,
@@ -520,17 +576,6 @@ where
     #[inline]
     fn as_mut(&mut self) -> &mut [T; N] {
         &mut self.0
-    }
-}
-
-impl<T, U, const N: usize> AsMut<Array<T, U>> for [T; N]
-where
-    U: ArraySize<ArrayType<T> = [T; N]>,
-{
-    #[inline]
-    fn as_mut(&mut self) -> &mut Array<T, U> {
-        // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; $len]`
-        unsafe { &mut *self.as_mut_ptr().cast() }
     }
 }
 
@@ -669,7 +714,8 @@ where
 {
     #[inline]
     fn from(array_ref: &'a [T; N]) -> &'a Array<T, U> {
-        array_ref.as_ref()
+        // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; $len]`
+        unsafe { &*array_ref.as_ptr().cast() }
     }
 }
 
@@ -689,7 +735,8 @@ where
 {
     #[inline]
     fn from(array_ref: &'a mut [T; N]) -> &'a mut Array<T, U> {
-        array_ref.as_mut()
+        // SAFETY: `Self` is a `repr(transparent)` newtype for `[T; $len]`
+        unsafe { &mut *array_ref.as_mut_ptr().cast() }
     }
 }
 
@@ -700,6 +747,52 @@ where
     #[inline]
     fn from(array_ref: &'a mut Array<T, U>) -> &'a mut [T; N] {
         array_ref.as_mut()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, U> From<Array<T, U>> for alloc::boxed::Box<[T]>
+where
+    U: ArraySize,
+{
+    #[inline]
+    fn from(array: Array<T, U>) -> alloc::boxed::Box<[T]> {
+        array.into_iter().collect()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, U> From<&Array<T, U>> for alloc::boxed::Box<[T]>
+where
+    T: Clone,
+    U: ArraySize,
+{
+    #[inline]
+    fn from(array: &Array<T, U>) -> alloc::boxed::Box<[T]> {
+        array.as_slice().into()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, U> From<Array<T, U>> for alloc::vec::Vec<T>
+where
+    U: ArraySize,
+{
+    #[inline]
+    fn from(array: Array<T, U>) -> alloc::vec::Vec<T> {
+        array.into_iter().collect()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, U> From<&Array<T, U>> for alloc::vec::Vec<T>
+where
+    T: Clone,
+    U: ArraySize,
+{
+    #[inline]
+    fn from(array: &Array<T, U>) -> alloc::vec::Vec<T> {
+        array.as_slice().into()
     }
 }
 
@@ -814,6 +907,62 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
+impl<T, U> TryFrom<alloc::boxed::Box<[T]>> for Array<T, U>
+where
+    Self: Clone,
+    U: ArraySize,
+{
+    type Error = TryFromSliceError;
+
+    #[inline]
+    fn try_from(b: alloc::boxed::Box<[T]>) -> Result<Self, TryFromSliceError> {
+        Self::try_from(&*b)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a, T, U> TryFrom<&'a alloc::boxed::Box<[T]>> for Array<T, U>
+where
+    Self: Clone,
+    U: ArraySize,
+{
+    type Error = TryFromSliceError;
+
+    #[inline]
+    fn try_from(b: &'a alloc::boxed::Box<[T]>) -> Result<Self, TryFromSliceError> {
+        Self::try_from(&**b)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, U> TryFrom<alloc::vec::Vec<T>> for Array<T, U>
+where
+    Self: Clone,
+    U: ArraySize,
+{
+    type Error = TryFromSliceError;
+
+    #[inline]
+    fn try_from(v: alloc::vec::Vec<T>) -> Result<Self, TryFromSliceError> {
+        Self::try_from(v.as_slice())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a, T, U> TryFrom<&'a alloc::vec::Vec<T>> for Array<T, U>
+where
+    Self: Clone,
+    U: ArraySize,
+{
+    type Error = TryFromSliceError;
+
+    #[inline]
+    fn try_from(v: &'a alloc::vec::Vec<T>) -> Result<Self, TryFromSliceError> {
+        Self::try_from(v.as_slice())
+    }
+}
+
 impl<'a, T, U> TryFrom<&'a [T]> for &'a Array<T, U>
 where
     U: ArraySize,
@@ -843,6 +992,59 @@ where
         // SAFETY: `Array<T, U>` is a `repr(transparent)` newtype for a core
         // array with length checked above.
         Ok(unsafe { &mut *slice.as_mut_ptr().cast() })
+    }
+}
+
+// Deprecated legacy methods to ease migrations from `generic-array`
+impl<T, U> Array<T, U>
+where
+    U: ArraySize,
+{
+    /// Convert the given slice into a reference to a hybrid array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slice's length doesn't match the array type.
+    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
+    #[inline]
+    pub fn from_slice(slice: &[T]) -> &Self {
+        slice.try_into().expect("slice length mismatch")
+    }
+
+    /// Convert the given mutable slice to a mutable reference to a hybrid array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slice's length doesn't match the array type.
+    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
+    #[inline]
+    pub fn from_mut_slice(slice: &mut [T]) -> &mut Self {
+        slice.try_into().expect("slice length mismatch")
+    }
+
+    /// Clone the contents of the slice as a new hybrid array.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slice's length doesn't match the array type.
+    #[deprecated(since = "0.2.0", note = "use `TryFrom` instead")]
+    #[inline]
+    pub fn clone_from_slice(slice: &[T]) -> Self
+    where
+        Self: Clone,
+    {
+        slice.try_into().expect("slice length mismatch")
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a, T, U> Arbitrary<'a> for Array<T, U>
+where
+    T: Arbitrary<'a>,
+    U: ArraySize,
+{
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Self::try_from_fn(|_n| Arbitrary::arbitrary(u))
     }
 }
 
